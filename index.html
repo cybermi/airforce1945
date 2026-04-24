@@ -315,22 +315,27 @@
     .settings-actions {
       margin-top: 10px;
       display: flex;
-      gap: 8px;
-      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: center;
       position: sticky;
       bottom: 0;
       z-index: 2;
       background: #0d151f;
       padding-top: 10px;
-      padding-bottom: 2px;
+      padding-bottom: 4px;
       border-top: 1px solid rgba(255, 255, 255, 0.08);
     }
 
     .settings-actions .btn {
-      min-width: 108px;
+      min-width: 0;
       margin: 0;
-      font-size: 13px;
-      padding: 9px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      line-height: 1.2;
+      padding: 7px 11px;
+      flex: 0 0 auto;
+      box-shadow: none;
     }
 
     .settings-actions .btn.ghost {
@@ -1011,10 +1016,12 @@
   </div>
 
   <script>
-    (() => {
+    (async () => {
       const WIDTH = 400;
       const HEIGHT = 650;
       const CM_TO_CSS_PX = 37.7952755906;
+      const DEFAULT_SETTINGS_URL = "1945-config.json";
+      const ASSET_BASE_DIR = "asset";
       const GAME_CONFIG = {
         totalStages: 9,
         stageSpeedGrowth: 0.1,
@@ -1390,6 +1397,8 @@
       const MAX_APPEARANCE_DATA_URL_LENGTH = 280000;
       const MAX_AUDIO_DATA_URL_LENGTH = 2800000;
       const APPEARANCE_ENCODE_MAX_SIDE = 520;
+      const IMAGE_ASSET_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"];
+      const AUDIO_ASSET_EXTENSIONS = [".mp3", ".wav"];
       const APPEARANCE_KEYS = [
         "player",
         "wingman",
@@ -1507,11 +1516,29 @@
         return appearance;
       }
 
+      function normalizeAssetFilePath(value, allowedExtensions) {
+        if (typeof value !== "string") return "";
+        const trimmed = value.trim();
+        if (!trimmed || trimmed.length > 2400) return "";
+        if (/^(data:|blob:|https?:\/\/)/i.test(trimmed)) return "";
+        let path = trimmed.replace(/\\/g, "/").replace(/^\.\/+/, "");
+        if (path.startsWith("/") || path.includes("://") || path.split("/").includes("..")) return "";
+        if (path.toLowerCase().startsWith(`${ASSET_BASE_DIR}/`)) {
+          path = path.slice(ASSET_BASE_DIR.length + 1);
+        }
+        const lower = path.toLowerCase();
+        if (!allowedExtensions.some((ext) => lower.endsWith(ext))) return "";
+        return `${ASSET_BASE_DIR}/${path}`;
+      }
+
       function sanitizeAppearanceValue(value) {
         if (typeof value !== "string") return "";
-        if (!value.startsWith("data:image/")) return "";
-        if (value.length > MAX_APPEARANCE_DATA_URL_LENGTH) return "";
-        return value;
+        const text = value.trim();
+        if (text.startsWith("data:image/")) {
+          if (text.length > MAX_APPEARANCE_DATA_URL_LENGTH) return "";
+          return text;
+        }
+        return normalizeAssetFilePath(text, IMAGE_ASSET_EXTENSIONS);
       }
 
       function sanitizeAppearanceSettings(raw = {}) {
@@ -1595,6 +1622,8 @@
 
       function sanitizeAudioValue(value) {
         if (typeof value !== "string") return "";
+        const assetPath = normalizeAssetFilePath(value, AUDIO_ASSET_EXTENSIONS);
+        if (assetPath) return assetPath;
         const text = normalizeAudioDataUrl(value);
         if (!text.startsWith("data:audio/")) return "";
         if (text.length > MAX_AUDIO_DATA_URL_LENGTH) return "";
@@ -1636,126 +1665,130 @@
         return sanitizeAudioMetaSettings(raw);
       }
 
-      const DEFAULT_SETTINGS = {
-        enemyHp: {
-          scout: { base: GAME_CONFIG.enemies.scout.hp, growthPct: 10, max: GAME_CONFIG.enemies.scout.hp * 5 },
-          fighter: { base: GAME_CONFIG.enemies.fighter.hp, growthPct: 10, max: GAME_CONFIG.enemies.fighter.hp * 5 },
-          gunship: { base: GAME_CONFIG.enemies.gunship.hp, growthPct: 10, max: GAME_CONFIG.enemies.gunship.hp * 5 },
-          ufo: { base: GAME_CONFIG.enemies.ufo.hp, growthPct: 10, max: GAME_CONFIG.enemies.ufo.hp * 5 },
-          heavy: { base: GAME_CONFIG.enemies.heavy.hp, growthPct: 10, max: GAME_CONFIG.enemies.heavy.hp * 5 },
-          boss: {
-            base: GAME_CONFIG.bossBase.hp,
-            growthPct: GAME_CONFIG.bossHpGrowth * 100,
-            max: GAME_CONFIG.bossBase.hp * 5,
+      function createBuiltinDefaultSettings() {
+        return {
+          enemyHp: {
+            scout: { base: GAME_CONFIG.enemies.scout.hp, growthPct: 10, max: GAME_CONFIG.enemies.scout.hp * 5 },
+            fighter: { base: GAME_CONFIG.enemies.fighter.hp, growthPct: 10, max: GAME_CONFIG.enemies.fighter.hp * 5 },
+            gunship: { base: GAME_CONFIG.enemies.gunship.hp, growthPct: 10, max: GAME_CONFIG.enemies.gunship.hp * 5 },
+            ufo: { base: GAME_CONFIG.enemies.ufo.hp, growthPct: 10, max: GAME_CONFIG.enemies.ufo.hp * 5 },
+            heavy: { base: GAME_CONFIG.enemies.heavy.hp, growthPct: 10, max: GAME_CONFIG.enemies.heavy.hp * 5 },
+            boss: {
+              base: GAME_CONFIG.bossBase.hp,
+              growthPct: GAME_CONFIG.bossHpGrowth * 100,
+              max: GAME_CONFIG.bossBase.hp * 5,
+            },
           },
-        },
-        enemySpawn: {
-          scout: { base: 90, growthPct: 10, max: 450 },
-          fighter: { base: 45, growthPct: 10, max: 225 },
-          gunship: { base: 5, growthPct: 10, max: 25 },
-          heavy: { base: 15, growthPct: 10, max: 75 },
-          ufo: { base: 2, growthPct: 10, max: 10 },
-        },
-        enemySpeed: {
-          scout: { base: 112, growthPct: 10, max: 224 },
-          fighter: { base: 85, growthPct: 10, max: 170 },
-          gunship: { base: 73, growthPct: 10, max: 146 },
-          heavy: { base: 55, growthPct: 10, max: 110 },
-          ufo: { base: 62, growthPct: 10, max: 124 },
-          boss: { base: 17.4, growthPct: 15, max: 34.8 },
-        },
-        scoutFormation: {
-          teamBase: 10,
-          teamGrowth: 5,
-          teamMax: 30,
-          sizeBase: 5,
-          sizeGrowth: 0,
-          sizeMax: 10,
-        },
-        enemySize: {
-          scout: 1,
-          fighter: 1,
-          gunship: 1,
-          ufo: 1,
-          heavy: 1,
-          boss: 1,
-        },
-        bossSizePct: {
-          widthMinPct: 30,
-          widthMaxPct: 60,
-          heightMinPct: 30,
-          heightMaxPct: 35,
-        },
-        drops: {
-          heavyRewardCount: 1,
-          bossRewardBase: GAME_CONFIG.bossRewardBase,
-          bossRewardGrowth: GAME_CONFIG.bossRewardGrowth,
-        },
-        rewards: {
-          weapon: { base: 1, growth: 0 },
-          sideGun: { base: 1, growth: 0 },
-          rearGun: { base: 1, growth: 0 },
-          missile: { base: GAME_CONFIG.missilePickupBase, growth: GAME_CONFIG.missilePickupGrowth },
-          heavyMissile: { base: 1, growth: 0 },
-          laser: { base: 1, growth: 0 },
-          wingman: { base: 1, growth: 0 },
-          shield: { base: 0, growth: 1 },
-          bomb: { base: 1, growth: 0 },
-          heal: { base: 1, growth: 0 },
-        },
-        combat: {
-          bulletDamage: GAME_CONFIG.player.bulletDamage,
-          missileDamage: GAME_CONFIG.player.missileDamage,
-          bulletRateScale: GAME_CONFIG.player.bulletRateScale,
-          missileRateScale: GAME_CONFIG.player.missileRateScale,
-          sideGunMaxLevel: 3,
-          sideGunAngleDeg: 78,
-          sideGunSpreadDeg: 14,
-          sideGunDamageScale: 0.8,
-          sideGunSpeedScale: 1,
-          rearGunMaxLevel: 3,
-          rearGunAngleDeg: 180,
-          rearGunSpreadDeg: 18,
-          rearGunDamageScale: 0.8,
-          rearGunSpeedScale: 1,
-          heavyMissileExplosionRadius: DEFAULT_HEAVY_MISSILE_RADIUS,
-          laserDurationSec: 15,
-          laserHeavyBreakSec: 1,
-          laserWidth: 16,
-        },
-        ufoWeapon: {
-          bulletSpeed: 226,
-          volleyCount: 7,
-          fireInterval: 0.82,
-          volleyShotInterval: 0.5,
-        },
-        enemyFireRate: {
-          scout: 5,
-          fighter: 5,
-          gunship: 4.2,
-          heavy: 5,
-          boss: 5,
-          decayRatio: 0.1,
-        },
-        enemyBulletSpeed: {
-          base: DEFAULT_ENEMY_BULLET_SPEED_BY_TYPE.gunship,
-          max: DEFAULT_ENEMY_BULLET_SPEED_BY_TYPE.gunship * 2,
-        },
-        pacing: {
-          durationBase: 50,
-          growthPct: 10,
-        },
-        effects: {
-          enemyExplosionVisualScale: 1.5,
-          enemyExplosionSoundScale: 1.5,
-          heavyMissileExplosionSoundDurationSec: 2,
-          rewardIconSizeCm: 1,
-        },
-        powerupVisual: createDefaultPowerupVisualSettings(),
-        appearance: createEmptyAppearanceSettings(),
-        audio: createEmptyAudioSettings(),
-        audioMeta: createEmptyAudioMetaSettings(),
-      };
+          enemySpawn: {
+            scout: { base: 90, growthPct: 10, max: 450 },
+            fighter: { base: 45, growthPct: 10, max: 225 },
+            gunship: { base: 5, growthPct: 10, max: 25 },
+            heavy: { base: 15, growthPct: 10, max: 75 },
+            ufo: { base: 2, growthPct: 10, max: 10 },
+          },
+          enemySpeed: {
+            scout: { base: 112, growthPct: 10, max: 224 },
+            fighter: { base: 85, growthPct: 10, max: 170 },
+            gunship: { base: 73, growthPct: 10, max: 146 },
+            heavy: { base: 55, growthPct: 10, max: 110 },
+            ufo: { base: 62, growthPct: 10, max: 124 },
+            boss: { base: 17.4, growthPct: 15, max: 34.8 },
+          },
+          scoutFormation: {
+            teamBase: 10,
+            teamGrowth: 5,
+            teamMax: 30,
+            sizeBase: 5,
+            sizeGrowth: 0,
+            sizeMax: 10,
+          },
+          enemySize: {
+            scout: 1,
+            fighter: 1,
+            gunship: 1,
+            ufo: 1,
+            heavy: 1,
+            boss: 1,
+          },
+          bossSizePct: {
+            widthMinPct: 30,
+            widthMaxPct: 60,
+            heightMinPct: 30,
+            heightMaxPct: 35,
+          },
+          drops: {
+            heavyRewardCount: 1,
+            bossRewardBase: GAME_CONFIG.bossRewardBase,
+            bossRewardGrowth: GAME_CONFIG.bossRewardGrowth,
+          },
+          rewards: {
+            weapon: { base: 1, growth: 0 },
+            sideGun: { base: 1, growth: 0 },
+            rearGun: { base: 1, growth: 0 },
+            missile: { base: GAME_CONFIG.missilePickupBase, growth: GAME_CONFIG.missilePickupGrowth },
+            heavyMissile: { base: 1, growth: 0 },
+            laser: { base: 1, growth: 0 },
+            wingman: { base: 1, growth: 0 },
+            shield: { base: 0, growth: 1 },
+            bomb: { base: 1, growth: 0 },
+            heal: { base: 1, growth: 0 },
+          },
+          combat: {
+            bulletDamage: GAME_CONFIG.player.bulletDamage,
+            missileDamage: GAME_CONFIG.player.missileDamage,
+            bulletRateScale: GAME_CONFIG.player.bulletRateScale,
+            missileRateScale: GAME_CONFIG.player.missileRateScale,
+            sideGunMaxLevel: 3,
+            sideGunAngleDeg: 78,
+            sideGunSpreadDeg: 14,
+            sideGunDamageScale: 0.8,
+            sideGunSpeedScale: 1,
+            rearGunMaxLevel: 3,
+            rearGunAngleDeg: 180,
+            rearGunSpreadDeg: 18,
+            rearGunDamageScale: 0.8,
+            rearGunSpeedScale: 1,
+            heavyMissileExplosionRadius: DEFAULT_HEAVY_MISSILE_RADIUS,
+            laserDurationSec: 15,
+            laserHeavyBreakSec: 1,
+            laserWidth: 16,
+          },
+          ufoWeapon: {
+            bulletSpeed: 226,
+            volleyCount: 7,
+            fireInterval: 0.82,
+            volleyShotInterval: 0.5,
+          },
+          enemyFireRate: {
+            scout: 5,
+            fighter: 5,
+            gunship: 4.2,
+            heavy: 5,
+            boss: 5,
+            decayRatio: 0.1,
+          },
+          enemyBulletSpeed: {
+            base: DEFAULT_ENEMY_BULLET_SPEED_BY_TYPE.gunship,
+            max: DEFAULT_ENEMY_BULLET_SPEED_BY_TYPE.gunship * 2,
+          },
+          pacing: {
+            durationBase: 50,
+            growthPct: 10,
+          },
+          effects: {
+            enemyExplosionVisualScale: 1.5,
+            enemyExplosionSoundScale: 1.5,
+            heavyMissileExplosionSoundDurationSec: 2,
+            rewardIconSizeCm: 1,
+          },
+          powerupVisual: createDefaultPowerupVisualSettings(),
+          appearance: createEmptyAppearanceSettings(),
+          audio: createEmptyAudioSettings(),
+          audioMeta: createEmptyAudioMetaSettings(),
+        };
+      }
+
+      let DEFAULT_SETTINGS = createBuiltinDefaultSettings();
 
       function sanitizeSettings(raw = {}) {
         const readNum = (value, fallback, min, max) => {
@@ -2399,6 +2432,18 @@
         }
       }
 
+      async function loadDefaultSettingsFromJson() {
+        if (typeof fetch !== "function") return;
+        try {
+          const response = await fetch(DEFAULT_SETTINGS_URL, { cache: "no-store" });
+          if (!response.ok) return;
+          const externalSettings = await response.json();
+          DEFAULT_SETTINGS = sanitizeSettings(externalSettings);
+        } catch {
+          // Keep the built-in defaults when the page is opened without a local server.
+        }
+      }
+
       function exportSettingsAsJson() {
         try {
           const exportSettings = readSettingsFromForm();
@@ -2435,6 +2480,7 @@
         }
       }
 
+      await loadDefaultSettingsFromJson();
       let runtimeSettings = loadSettings();
       let appearanceDraft = cloneAppearanceSettings(runtimeSettings.appearance);
       let audioDraft = cloneAudioSettings(runtimeSettings.audio);
