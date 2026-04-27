@@ -1520,14 +1520,30 @@
         if (typeof value !== "string") return "";
         const trimmed = value.trim();
         if (!trimmed || trimmed.length > 2400) return "";
-        if (/^(data:|blob:|https?:\/\/)/i.test(trimmed)) return "";
+        if (/^(data:|blob:)/i.test(trimmed)) return "";
+        const hasAllowedExtension = (path) => {
+          const cleanPath = String(path || "").split(/[?#]/)[0].toLowerCase();
+          return allowedExtensions.some((ext) => cleanPath.endsWith(ext));
+        };
+        if (/^https?:\/\//i.test(trimmed)) {
+          try {
+            const url = new URL(trimmed);
+            return hasAllowedExtension(url.pathname) ? trimmed : "";
+          } catch {
+            return "";
+          }
+        }
         let path = trimmed.replace(/\\/g, "/").replace(/^\.\/+/, "");
-        if (path.startsWith("/") || path.includes("://") || path.split("/").includes("..")) return "";
+        if (path.startsWith("/")) {
+          path = path.replace(/^\/+/, "");
+          if (!path.toLowerCase().startsWith(`${ASSET_BASE_DIR}/`)) return "";
+        }
+        const pathOnly = path.split(/[?#]/)[0];
+        if (path.includes("://") || pathOnly.split("/").includes("..")) return "";
         if (path.toLowerCase().startsWith(`${ASSET_BASE_DIR}/`)) {
           path = path.slice(ASSET_BASE_DIR.length + 1);
         }
-        const lower = path.toLowerCase();
-        if (!allowedExtensions.some((ext) => lower.endsWith(ext))) return "";
+        if (!hasAllowedExtension(path)) return "";
         return `${ASSET_BASE_DIR}/${path}`;
       }
 
@@ -1541,11 +1557,11 @@
         return normalizeAssetFilePath(text, IMAGE_ASSET_EXTENSIONS);
       }
 
-      function sanitizeAppearanceSettings(raw = {}) {
+      function sanitizeAppearanceSettings(raw = {}, fallback = {}) {
         const clean = createEmptyAppearanceSettings();
         for (let i = 0; i < APPEARANCE_KEYS.length; i += 1) {
           const key = APPEARANCE_KEYS[i];
-          clean[key] = sanitizeAppearanceValue(raw[key]);
+          clean[key] = sanitizeAppearanceValue(raw[key]) || sanitizeAppearanceValue(fallback[key]);
         }
         return clean;
       }
@@ -1630,11 +1646,12 @@
         return text;
       }
 
-      function sanitizeAudioSettings(raw = {}) {
+      function sanitizeAudioSettings(raw = {}, fallback = {}) {
         const clean = createEmptyAudioSettings();
         for (let i = 0; i < WEAPON_AUDIO_ITEMS.length; i += 1) {
           const key = WEAPON_AUDIO_ITEMS[i].key;
-          clean[key] = sanitizeAudioValue(raw[key]);
+          const rawValue = key === "laserLoop" && raw.laser != null ? raw.laser : raw[key];
+          clean[key] = sanitizeAudioValue(rawValue) || sanitizeAudioValue(fallback[key]);
         }
         return clean;
       }
@@ -1643,14 +1660,16 @@
         return sanitizeAudioSettings(raw);
       }
 
-      function sanitizeAudioMetaSettings(raw = {}) {
+      function sanitizeAudioMetaSettings(raw = {}, fallback = {}) {
         const clean = createEmptyAudioMetaSettings();
         for (let i = 0; i < WEAPON_AUDIO_ITEMS.length; i += 1) {
           const key = WEAPON_AUDIO_ITEMS[i].key;
+          const fallbackEntry = fallback && typeof fallback === "object" ? fallback[key] : null;
           const entry = raw && typeof raw === "object" ? raw[key] : null;
-          const name = sanitizeAudioMetaName(entry?.name);
-          const bytes = sanitizeAudioMetaBytes(entry?.bytes);
+          const name = sanitizeAudioMetaName(entry?.name) || sanitizeAudioMetaName(fallbackEntry?.name);
+          const bytes = sanitizeAudioMetaBytes(entry?.bytes) || sanitizeAudioMetaBytes(fallbackEntry?.bytes);
           const mime = normalizeAudioMime(entry?.mime)
+            || normalizeAudioMime(fallbackEntry?.mime)
             || normalizeAudioMime(inferAudioMimeFromFileName(name));
           clean[key] = {
             name,
@@ -2393,9 +2412,9 @@
             ) * 10) / 10,
           },
           powerupVisual: sanitizePowerupVisualSettings(fromPowerupVisual),
-          appearance: sanitizeAppearanceSettings(fromAppearance),
-          audio: sanitizeAudioSettings(fromAudio),
-          audioMeta: sanitizeAudioMetaSettings(fromAudioMeta),
+          appearance: sanitizeAppearanceSettings(fromAppearance, DEFAULT_SETTINGS.appearance),
+          audio: sanitizeAudioSettings(fromAudio, DEFAULT_SETTINGS.audio),
+          audioMeta: sanitizeAudioMetaSettings(fromAudioMeta, DEFAULT_SETTINGS.audioMeta),
         };
       }
 
@@ -5412,6 +5431,12 @@
         }
       }
 
+      function isWeaponAudioLoopPlaying(key) {
+        const entry = customWeaponAudioLoops[key];
+        const audio = entry?.audio;
+        return !!audio && !audio.paused && !audio.ended && audio.readyState >= 2;
+      }
+
       function startWeaponAudioLoop(key, { volume = 1, playbackRate = 1 } = {}) {
         if (!state.soundOn) return false;
         const src = sanitizeAudioValue(runtimeSettings.audio?.[key]);
@@ -5426,7 +5451,11 @@
             if (existing.audio.paused) {
               const playTask = existing.audio.play();
               if (playTask && typeof playTask.catch === "function") {
-                playTask.catch(() => {});
+                playTask.catch(() => {
+                  if (customWeaponAudioLoops[key]?.audio === existing.audio) {
+                    delete customWeaponAudioLoops[key];
+                  }
+                });
               }
             }
           } catch {
@@ -5444,13 +5473,23 @@
         playerAudio.loop = true;
         playerAudio.volume = vol;
         playerAudio.playbackRate = rate;
+        playerAudio.preload = "auto";
         customWeaponAudioLoops[key] = {
           src,
           audio: playerAudio,
         };
+        playerAudio.addEventListener("error", () => {
+          if (customWeaponAudioLoops[key]?.audio === playerAudio) {
+            delete customWeaponAudioLoops[key];
+          }
+        }, { once: true });
         const playTask = playerAudio.play();
         if (playTask && typeof playTask.catch === "function") {
-          playTask.catch(() => {});
+          playTask.catch(() => {
+            if (customWeaponAudioLoops[key]?.audio === playerAudio) {
+              delete customWeaponAudioLoops[key];
+            }
+          });
         }
         return true;
       }
@@ -5958,7 +5997,8 @@
           stopLaserMotorSfx(0.05);
           return;
         }
-        if (startWeaponAudioLoop("laserLoop", { volume: 0.82 })) {
+        const hasCustomLoop = startWeaponAudioLoop("laserLoop", { volume: 0.82 });
+        if (hasCustomLoop && isWeaponAudioLoopPlaying("laserLoop")) {
           stopLaserMotorSfx(0.04);
         } else {
           startLaserMotorSfx();
