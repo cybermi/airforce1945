@@ -6073,12 +6073,12 @@
           stopLaserMotorSfx(0.05);
           return;
         }
-        const hasCustomLoop = startWeaponAudioLoop("laserLoop", { volume: 0.82 });
-        if (hasCustomLoop && isWeaponAudioLoopPlaying("laserLoop")) {
+        if (getEffectiveAudioSource("laserLoop")) {
+          startWeaponAudioLoop("laserLoop", { volume: 0.82 });
           stopLaserMotorSfx(0.04);
-        } else {
-          startLaserMotorSfx();
+          return;
         }
+        startLaserMotorSfx();
       }
 
       function playHeavyMissileExplosionSfx(durationSec, intensity = 1, retried = false) {
