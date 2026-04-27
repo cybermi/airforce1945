@@ -1015,7 +1015,7 @@
     </div>
   </div>
 
-  <script src="phaser.min.js"></script>
+  <script src="phaser-3.55.2.min.js" onerror="window.__phaserLoadError = true"></script>
   <script>
     (async () => {
       const WIDTH = 400;
@@ -10235,7 +10235,9 @@
           overlay.classList.remove("hidden");
           overlayTitle.textContent = "Phaser 未加载";
           overlaySub.textContent = "资源缺失";
-          overlayDesc.textContent = "请确认 phaser.min.js 位于页面同级目录";
+          overlayDesc.textContent = window.__phaserLoadError
+            ? "请确认 phaser-3.55.2.min.js 可访问，且服务器以 JavaScript 类型返回"
+            : "请刷新缓存后重试，或确认手机浏览器支持当前脚本";
           startBtn.disabled = true;
           throw new Error("Phaser failed to load");
         }
