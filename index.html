@@ -3223,6 +3223,8 @@
       const customWeaponAudioChannels = {};
       const customWeaponAudioChannelSrc = {};
       const customWeaponAudioResumeAt = {};
+      const customWeaponAudioLoopAttemptAt = {};
+      const customWeaponAudioLoopFailedUntil = {};
       const customWeaponAudioOneshots = new Set();
       const customWeaponAudioActiveCount = {};
       const customWeaponAudioLastPlayAt = {};
@@ -5493,6 +5495,7 @@
         const entry = customWeaponAudioLoops[key];
         if (!entry) return;
         delete customWeaponAudioLoops[key];
+        delete customWeaponAudioLoopAttemptAt[key];
         try {
           entry.audio.pause();
           entry.audio.currentTime = 0;
@@ -5504,26 +5507,41 @@
       function isWeaponAudioLoopPlaying(key) {
         const entry = customWeaponAudioLoops[key];
         const audio = entry?.audio;
-        return !!audio && !audio.paused && !audio.ended && audio.readyState >= 2;
+        return !!audio && !audio.paused && !audio.ended && !audio.error;
       }
 
       function startWeaponAudioLoop(key, { volume = 1, playbackRate = 1 } = {}) {
         if (!state.soundOn) return false;
         const src = getEffectiveAudioSource(key);
         if (!src) return false;
+        const nowMs = performance.now();
+        if ((Number(customWeaponAudioLoopFailedUntil[key]) || 0) > nowMs) {
+          return false;
+        }
         const vol = bound(Number(volume) || 1, 0, 1);
         const rate = bound(Number(playbackRate) || 1, 0.25, 4);
         const existing = customWeaponAudioLoops[key];
         if (existing && existing.src === src) {
+          if (existing.audio.error) {
+            customWeaponAudioLoopFailedUntil[key] = nowMs + 2500;
+            stopWeaponAudioLoop(key);
+            return false;
+          }
           try {
             existing.audio.volume = vol;
             existing.audio.playbackRate = rate;
             if (existing.audio.paused) {
+              if (nowMs - (Number(customWeaponAudioLoopAttemptAt[key]) || 0) < 650) {
+                return false;
+              }
+              customWeaponAudioLoopAttemptAt[key] = nowMs;
               const playTask = existing.audio.play();
               if (playTask && typeof playTask.catch === "function") {
                 playTask.catch(() => {
                   if (customWeaponAudioLoops[key]?.audio === existing.audio) {
+                    customWeaponAudioLoopFailedUntil[key] = performance.now() + 2500;
                     delete customWeaponAudioLoops[key];
+                    delete customWeaponAudioLoopAttemptAt[key];
                   }
                 });
               }
@@ -5550,14 +5568,19 @@
         };
         playerAudio.addEventListener("error", () => {
           if (customWeaponAudioLoops[key]?.audio === playerAudio) {
+            customWeaponAudioLoopFailedUntil[key] = performance.now() + 2500;
             delete customWeaponAudioLoops[key];
+            delete customWeaponAudioLoopAttemptAt[key];
           }
         }, { once: true });
+        customWeaponAudioLoopAttemptAt[key] = nowMs;
         const playTask = playerAudio.play();
         if (playTask && typeof playTask.catch === "function") {
           playTask.catch(() => {
             if (customWeaponAudioLoops[key]?.audio === playerAudio) {
+              customWeaponAudioLoopFailedUntil[key] = performance.now() + 2500;
               delete customWeaponAudioLoops[key];
+              delete customWeaponAudioLoopAttemptAt[key];
             }
           });
         }
@@ -6074,8 +6097,12 @@
           return;
         }
         if (getEffectiveAudioSource("laserLoop")) {
-          startWeaponAudioLoop("laserLoop", { volume: 0.82 });
-          stopLaserMotorSfx(0.04);
+          const customLoopActive = startWeaponAudioLoop("laserLoop", { volume: 0.82 });
+          if (customLoopActive || customWeaponAudioLoops.laserLoop) {
+            stopLaserMotorSfx(0.04);
+          } else {
+            startLaserMotorSfx();
+          }
           return;
         }
         startLaserMotorSfx();
