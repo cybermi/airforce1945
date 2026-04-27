@@ -141,6 +141,13 @@
       filter: brightness(0.95);
     }
 
+    button,
+    input,
+    select,
+    textarea {
+      touch-action: manipulation;
+    }
+
     .btn.ghost {
       margin-top: 10px;
       background: #101a24;
@@ -3947,7 +3954,7 @@
             }
           });
 
-          playBtn.addEventListener("click", () => {
+          bindMobileCommand(playBtn, () => {
             const dataUrl = getEffectiveAudioSource(item.key, audioDraft);
             if (!dataUrl) return;
             unlockAudioByGesture();
@@ -3958,7 +3965,7 @@
             }
           });
 
-          clearBtn.addEventListener("click", () => {
+          bindMobileCommand(clearBtn, () => {
             audioDraft[item.key] = "";
             audioMetaDraft[item.key] = {
               name: "",
@@ -4031,7 +4038,7 @@
             }
           });
 
-          clearBtn.addEventListener("click", () => {
+          bindMobileCommand(clearBtn, () => {
             appearanceDraft[item.key] = "";
             refreshAppearanceRow(item.key);
             spawnToast(`${item.label} 已恢复默认外观`, 950);
@@ -10296,20 +10303,56 @@
         });
       }
 
-      settingsBtn.addEventListener("click", () => {
+      function bindMobileCommand(el, action) {
+        if (!el || typeof action !== "function") return;
+        let lastRunAt = 0;
+        const run = (ev) => {
+          if (ev?.type === "pointerup" && ev.pointerType === "mouse" && ev.button !== 0) {
+            return;
+          }
+          const now = performance.now();
+          if (now - lastRunAt < 420) {
+            ev?.preventDefault?.();
+            ev?.stopPropagation?.();
+            return;
+          }
+          lastRunAt = now;
+          ev?.preventDefault?.();
+          ev?.stopPropagation?.();
+          action(ev);
+        };
+        el.addEventListener("pointerup", run, { passive: false });
+        el.addEventListener("touchend", run, { passive: false });
+        el.addEventListener("click", run, { passive: false });
+      }
+
+      function stopUiEventPropagation(ev) {
+        ev.stopPropagation();
+      }
+
+      overlay.addEventListener("pointerdown", stopUiEventPropagation, { passive: true });
+      overlay.addEventListener("pointerup", stopUiEventPropagation, { passive: true });
+      overlay.addEventListener("touchstart", stopUiEventPropagation, { passive: true });
+      overlay.addEventListener("touchend", stopUiEventPropagation, { passive: true });
+      settingsPanel.addEventListener("pointerdown", stopUiEventPropagation, { passive: true });
+      settingsPanel.addEventListener("pointerup", stopUiEventPropagation, { passive: true });
+      settingsPanel.addEventListener("touchstart", stopUiEventPropagation, { passive: true });
+      settingsPanel.addEventListener("touchend", stopUiEventPropagation, { passive: true });
+
+      bindMobileCommand(settingsBtn, () => {
         syncSettingsToForm();
         setSettingsPanelVisible(true);
       });
 
-      settingsCancelBtn.addEventListener("click", () => {
+      bindMobileCommand(settingsCancelBtn, () => {
         setSettingsPanelVisible(false);
       });
 
-      settingsImportBtn.addEventListener("click", () => {
+      bindMobileCommand(settingsImportBtn, () => {
         settingsImportInput.click();
       });
 
-      settingsExportBtn.addEventListener("click", () => {
+      bindMobileCommand(settingsExportBtn, () => {
         exportSettingsAsJson();
       });
 
@@ -10325,7 +10368,7 @@
         }
       });
 
-      settingsSaveBtn.addEventListener("click", () => {
+      bindMobileCommand(settingsSaveBtn, () => {
         const nextSettings = readSettingsFromForm();
         applySettings(nextSettings);
         syncSettingsToForm();
@@ -10333,7 +10376,7 @@
         spawnToast("设置已生效", 1000);
       });
 
-      soundBtn.addEventListener("click", () => {
+      bindMobileCommand(soundBtn, () => {
         unlockAudioByGesture();
         state.soundOn = !state.soundOn;
         soundBtn.textContent = `音效：${state.soundOn ? "开启" : "关闭"}`;
@@ -10351,7 +10394,7 @@
         }
       });
 
-      stageSelectBtn.addEventListener("click", () => {
+      bindMobileCommand(stageSelectBtn, () => {
         unlockAudioByGesture();
         const current = getStartLevel();
         const next = current >= GAME_CONFIG.totalStages ? 1 : current + 1;
@@ -10359,7 +10402,7 @@
         spawnToast(`起始关卡 ${next}`, 800);
       });
 
-      startBtn.addEventListener("click", () => {
+      bindMobileCommand(startBtn, () => {
         unlockAudioByGesture();
         const launchLevel = getStartLevel();
         resetRun(launchLevel);
