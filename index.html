@@ -5367,7 +5367,7 @@
           if (playTask && typeof playTask.catch === "function") {
             playTask.catch(() => {});
           }
-          return true;
+          return !channel.paused || channel.readyState >= 2;
         }
 
         const nowMs = performance.now();
@@ -5416,7 +5416,7 @@
             cleanup();
           });
         }
-        return true;
+        return !playerAudio.paused || playerAudio.readyState >= 2;
       }
 
       function stopWeaponAudioLoop(key) {
@@ -5461,7 +5461,7 @@
           } catch {
             // no-op
           }
-          return true;
+          return isWeaponAudioLoopPlaying(key);
         }
         stopWeaponAudioLoop(key);
         let playerAudio = null;
@@ -5491,7 +5491,7 @@
             }
           });
         }
-        return true;
+        return isWeaponAudioLoopPlaying(key);
       }
 
       function stopAllCustomWeaponAudio() {
@@ -5538,15 +5538,21 @@
       }
 
       function playMissileLaunchSfx() {
-        playWeaponAudioShot("missileLaunch", { volume: 0.78, continueFromLast: true });
+        if (!playWeaponAudioShot("missileLaunch", { volume: 0.78, continueFromLast: true })) {
+          beep("power");
+        }
       }
 
       function playMissileExplosionSfx() {
-        playWeaponAudioShot("missileExplosion", { volume: 0.88, cooldownMs: 30, maxConcurrent: 6 });
+        if (!playWeaponAudioShot("missileExplosion", { volume: 0.88, cooldownMs: 30, maxConcurrent: 6 })) {
+          beep("explode", false, 1.1);
+        }
       }
 
       function playHeavyMissileLaunchSfx() {
-        playWeaponAudioShot("heavyMissileLaunch", { volume: 0.92, continueFromLast: true });
+        if (!playWeaponAudioShot("heavyMissileLaunch", { volume: 0.92, continueFromLast: true })) {
+          beep("power");
+        }
       }
 
       function startBombDroneRoar(retried = false) {
