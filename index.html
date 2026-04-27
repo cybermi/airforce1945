@@ -5341,7 +5341,68 @@
         return audioCtx;
       }
 
+      function primeLaserLoopAudioByGesture() {
+        if (!state.soundOn || state.laserFiring || isWeaponAudioLoopPlaying("laserLoop")) return;
+        const src = getEffectiveAudioSource("laserLoop");
+        if (!src) return;
+
+        let entry = customWeaponAudioLoops.laserLoop;
+        if (!entry || entry.src !== src || !entry.audio) {
+          stopWeaponAudioLoop("laserLoop");
+          let audio = null;
+          try {
+            audio = new Audio(src);
+          } catch {
+            return;
+          }
+          audio.loop = true;
+          audio.preload = "auto";
+          entry = { src, audio };
+          customWeaponAudioLoops.laserLoop = entry;
+          audio.addEventListener("error", () => {
+            if (customWeaponAudioLoops.laserLoop?.audio === audio) {
+              delete customWeaponAudioLoops.laserLoop;
+              delete customWeaponAudioLoopAttemptAt.laserLoop;
+            }
+          }, { once: true });
+        }
+
+        const audio = entry.audio;
+        delete customWeaponAudioLoopFailedUntil.laserLoop;
+        try {
+          audio.muted = true;
+          audio.volume = 0;
+        } catch {
+          // no-op
+        }
+        const playTask = audio.play();
+        const finishPrime = () => {
+          if (customWeaponAudioLoops.laserLoop?.audio !== audio) return;
+          try {
+            audio.pause();
+            audio.currentTime = 0;
+            audio.muted = false;
+            audio.volume = 0.82;
+          } catch {
+            // no-op
+          }
+        };
+        if (playTask && typeof playTask.then === "function") {
+          playTask.then(finishPrime).catch(() => {
+            try {
+              audio.muted = false;
+              audio.volume = 0.82;
+            } catch {
+              // no-op
+            }
+          });
+        } else {
+          finishPrime();
+        }
+      }
+
       function unlockAudioByGesture() {
+        primeLaserLoopAudioByGesture();
         const ctxAudio = ensureAudio();
         if (!ctxAudio) return;
 
@@ -6110,12 +6171,8 @@
           return;
         }
         if (getEffectiveAudioSource("laserLoop")) {
-          const customLoopActive = startWeaponAudioLoop("laserLoop", { volume: 0.82 });
-          if (customLoopActive || customWeaponAudioLoops.laserLoop) {
-            stopLaserMotorSfx(0.04);
-          } else {
-            startLaserMotorSfx();
-          }
+          startWeaponAudioLoop("laserLoop", { volume: 0.82 });
+          stopLaserMotorSfx(0.04);
           return;
         }
         startLaserMotorSfx();
