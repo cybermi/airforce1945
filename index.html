@@ -1391,6 +1391,7 @@
       const POWERUP_SPIN_SPEED = 1;
 
       const SETTINGS_STORAGE_KEY = "air1945_settings_v1";
+      const SETTINGS_DEFAULT_FINGERPRINT_KEY = "air1945_settings_default_fingerprint_v1";
       const BEST_SCORE_STORAGE_KEY = "air1945_best";
       const LAST_STAGE_STORAGE_KEY = "air1945_last_stage";
       const bound = (v, min, max) => Math.max(min, Math.min(max, v));
@@ -1455,6 +1456,17 @@
         { kind: "heal", label: "+ 生命", defaultColor: "#d4f8ea", defaultGlyph: "+" },
       ];
       const DEFAULT_HEAVY_MISSILE_RADIUS = Math.max(20, Math.round(GAME_CONFIG.enemies.heavy.w * 3));
+      let defaultSettingsFingerprint = "";
+
+      function createSettingsFingerprint(text) {
+        if (typeof text !== "string") return "";
+        let hash = 2166136261;
+        for (let i = 0; i < text.length; i += 1) {
+          hash ^= text.charCodeAt(i);
+          hash = Math.imul(hash, 16777619);
+        }
+        return `${text.length}:${(hash >>> 0).toString(16)}`;
+      }
 
       function normalizeHexColor(value) {
         if (typeof value !== "string") return "";
@@ -1658,6 +1670,30 @@
 
       function cloneAudioSettings(raw = {}) {
         return sanitizeAudioSettings(raw);
+      }
+
+      function getEffectiveAudioSource(key, draft = null) {
+        const fromDraft = draft && typeof draft === "object" ? draft[key] : undefined;
+        return sanitizeAudioValue(fromDraft)
+          || sanitizeAudioValue(runtimeSettings?.audio?.[key])
+          || sanitizeAudioValue(DEFAULT_SETTINGS?.audio?.[key]);
+      }
+
+      function getEffectiveAudioMeta(key, draft = null) {
+        const fromDraft = draft && typeof draft === "object" ? draft[key] : null;
+        const fromRuntime = runtimeSettings?.audioMeta?.[key] || null;
+        const fromDefault = DEFAULT_SETTINGS?.audioMeta?.[key] || null;
+        return {
+          name: sanitizeAudioMetaName(fromDraft?.name)
+            || sanitizeAudioMetaName(fromRuntime?.name)
+            || sanitizeAudioMetaName(fromDefault?.name),
+          bytes: sanitizeAudioMetaBytes(fromDraft?.bytes)
+            || sanitizeAudioMetaBytes(fromRuntime?.bytes)
+            || sanitizeAudioMetaBytes(fromDefault?.bytes),
+          mime: normalizeAudioMime(fromDraft?.mime)
+            || normalizeAudioMime(fromRuntime?.mime)
+            || normalizeAudioMime(fromDefault?.mime),
+        };
       }
 
       function sanitizeAudioMetaSettings(raw = {}, fallback = {}) {
@@ -2422,6 +2458,14 @@
         try {
           const rawText = localStorage.getItem(SETTINGS_STORAGE_KEY);
           if (!rawText) return sanitizeSettings(DEFAULT_SETTINGS);
+          if (defaultSettingsFingerprint) {
+            const savedFingerprint = localStorage.getItem(SETTINGS_DEFAULT_FINGERPRINT_KEY) || "";
+            if (savedFingerprint !== defaultSettingsFingerprint) {
+              localStorage.removeItem(SETTINGS_STORAGE_KEY);
+              localStorage.setItem(SETTINGS_DEFAULT_FINGERPRINT_KEY, defaultSettingsFingerprint);
+              return sanitizeSettings(DEFAULT_SETTINGS);
+            }
+          }
           const parsed = JSON.parse(rawText);
           const sanitized = sanitizeSettings(parsed);
 
@@ -2445,6 +2489,9 @@
       function saveSettings() {
         try {
           localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(runtimeSettings));
+          if (defaultSettingsFingerprint) {
+            localStorage.setItem(SETTINGS_DEFAULT_FINGERPRINT_KEY, defaultSettingsFingerprint);
+          }
           return true;
         } catch {
           return false;
@@ -2456,8 +2503,10 @@
         try {
           const response = await fetch(DEFAULT_SETTINGS_URL, { cache: "no-store" });
           if (!response.ok) return;
-          const externalSettings = await response.json();
+          const rawText = await response.text();
+          const externalSettings = JSON.parse(rawText);
           DEFAULT_SETTINGS = sanitizeSettings(externalSettings);
+          defaultSettingsFingerprint = createSettingsFingerprint(rawText);
         } catch {
           // Keep the built-in defaults when the page is opened without a local server.
         }
@@ -3757,19 +3806,40 @@
         return `${(size / (1024 * 1024)).toFixed(size < 10 * 1024 * 1024 ? 2 : 1)}MB`;
       }
 
+      function getFileNameFromAudioSource(src) {
+        if (typeof src !== "string") return "";
+        const text = src.trim();
+        if (!text || text.startsWith("data:")) return "";
+        let path = text;
+        try {
+          if (/^https?:\/\//i.test(text)) {
+            path = new URL(text).pathname;
+          }
+        } catch {
+          path = text;
+        }
+        const cleanPath = path.split(/[?#]/)[0].replace(/\\/g, "/");
+        const fileName = cleanPath.split("/").filter(Boolean).pop() || "";
+        try {
+          return sanitizeAudioMetaName(decodeURIComponent(fileName));
+        } catch {
+          return sanitizeAudioMetaName(fileName);
+        }
+      }
+
       function refreshAudioRow(key) {
         const statusEl = audioStatusEls[key];
         const clearBtn = audioClearEls[key];
         const playBtn = audioPlayEls[key];
         const inputEl = audioInputEls[key];
-        const dataUrl = audioDraft[key] || "";
-        const meta = audioMetaDraft[key] || {};
+        const dataUrl = getEffectiveAudioSource(key, audioDraft);
+        const meta = getEffectiveAudioMeta(key, audioMetaDraft);
         if (statusEl) {
           if (!dataUrl) {
             statusEl.textContent = "默认";
             statusEl.removeAttribute("title");
           } else {
-            const fileName = sanitizeAudioMetaName(meta.name);
+            const fileName = sanitizeAudioMetaName(meta.name) || getFileNameFromAudioSource(dataUrl);
             const bytes = sanitizeAudioMetaBytes(meta.bytes) || estimateBytesFromDataUrl(dataUrl);
             const sizeText = formatFileSize(bytes);
             const mime = normalizeAudioMime(meta.mime)
@@ -3779,7 +3849,7 @@
               ? `${fileName}${sizeText ? ` · ${sizeText}` : ""}`
               : `已设置${sizeText ? ` · ${sizeText}` : ""}`;
             statusEl.textContent = summary;
-            statusEl.title = `${readableType}${sizeText ? ` · ${sizeText}` : ""}${fileName ? ` · ${fileName}` : ""}`;
+            statusEl.title = `${readableType}${sizeText ? ` · ${sizeText}` : ""}${fileName ? ` · ${fileName}` : ""}${dataUrl.startsWith("data:") ? "" : ` · ${dataUrl}`}`;
           }
         }
         if (clearBtn) {
@@ -3870,7 +3940,7 @@
           });
 
           playBtn.addEventListener("click", () => {
-            const dataUrl = audioDraft[item.key] || "";
+            const dataUrl = getEffectiveAudioSource(item.key, audioDraft);
             if (!dataUrl) return;
             unlockAudioByGesture();
             if (playAudioPreview(dataUrl)) {
@@ -5296,7 +5366,7 @@
         } = {},
       ) {
         if (!state.soundOn) return false;
-        const src = sanitizeAudioValue(runtimeSettings.audio?.[key]);
+        const src = getEffectiveAudioSource(key);
         if (!src) return false;
         const vol = bound(Number(volume) || 1, 0, 1);
         const rate = bound(Number(playbackRate) || 1, 0.25, 4);
@@ -5439,7 +5509,7 @@
 
       function startWeaponAudioLoop(key, { volume = 1, playbackRate = 1 } = {}) {
         if (!state.soundOn) return false;
-        const src = sanitizeAudioValue(runtimeSettings.audio?.[key]);
+        const src = getEffectiveAudioSource(key);
         if (!src) return false;
         const vol = bound(Number(volume) || 1, 0, 1);
         const rate = bound(Number(playbackRate) || 1, 0.25, 4);
