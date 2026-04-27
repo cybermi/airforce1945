@@ -5342,7 +5342,7 @@
       }
 
       function primeLaserLoopAudioByGesture() {
-        if (!state.soundOn || state.laserFiring || isWeaponAudioLoopPlaying("laserLoop")) return;
+        if (!state.soundOn || state.laserFiring) return;
         const src = getEffectiveAudioSource("laserLoop");
         if (!src) return;
 
@@ -5372,33 +5372,47 @@
         try {
           audio.muted = true;
           audio.volume = 0;
+          audio.playbackRate = 1;
         } catch {
           // no-op
         }
+        if (isWeaponAudioLoopPlaying("laserLoop")) return;
         const playTask = audio.play();
-        const finishPrime = () => {
+        const keepPrimed = () => {
           if (customWeaponAudioLoops.laserLoop?.audio !== audio) return;
           try {
-            audio.pause();
-            audio.currentTime = 0;
-            audio.muted = false;
-            audio.volume = 0.82;
+            audio.muted = true;
+            audio.volume = 0;
           } catch {
             // no-op
           }
         };
         if (playTask && typeof playTask.then === "function") {
-          playTask.then(finishPrime).catch(() => {
+          playTask.then(keepPrimed).catch(() => {
             try {
-              audio.muted = false;
-              audio.volume = 0.82;
+              audio.muted = true;
+              audio.volume = 0;
             } catch {
               // no-op
             }
           });
         } else {
-          finishPrime();
+          keepPrimed();
         }
+      }
+
+      function setLaserLoopAudible(audible, volume = 0.82) {
+        const entry = customWeaponAudioLoops.laserLoop;
+        const audio = entry?.audio;
+        if (!audio) return false;
+        try {
+          audio.muted = !audible;
+          audio.volume = audible ? bound(Number(volume) || 0.82, 0, 1) : 0;
+          audio.playbackRate = 1;
+        } catch {
+          return false;
+        }
+        return true;
       }
 
       function unlockAudioByGesture() {
@@ -6165,13 +6179,25 @@
       }
 
       function syncLaserMotorSfxState() {
-        if (state.screen !== "playing" || !state.soundOn || state.laserTime <= 0 || !state.laserFiring) {
+        const laserLoopSrc = getEffectiveAudioSource("laserLoop");
+        if (state.screen !== "playing" || !state.soundOn) {
           stopWeaponAudioLoop("laserLoop");
           stopLaserMotorSfx(0.05);
           return;
         }
-        if (getEffectiveAudioSource("laserLoop")) {
+        if (state.laserTime <= 0 || !state.laserFiring) {
+          if (laserLoopSrc) {
+            setLaserLoopAudible(false);
+          } else {
+            stopWeaponAudioLoop("laserLoop");
+          }
+          stopLaserMotorSfx(0.05);
+          return;
+        }
+        if (laserLoopSrc) {
+          primeLaserLoopAudioByGesture();
           startWeaponAudioLoop("laserLoop", { volume: 0.82 });
+          setLaserLoopAudible(true, 0.82);
           stopLaserMotorSfx(0.04);
           return;
         }
@@ -10438,6 +10464,7 @@
         state.soundOn = !state.soundOn;
         soundBtn.textContent = `音效：${state.soundOn ? "开启" : "关闭"}`;
         if (state.soundOn) {
+          primeLaserLoopAudioByGesture();
           beep("power");
           syncBombDroneRoarState();
           syncMissileCruiseAudioState();
@@ -10463,6 +10490,7 @@
         unlockAudioByGesture();
         const launchLevel = getStartLevel();
         resetRun(launchLevel);
+        primeLaserLoopAudioByGesture();
         spawnToast(`STAGE ${launchLevel}`, 1000);
       });
 
