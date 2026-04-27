@@ -3232,6 +3232,7 @@
       let bombDroneRoar = null;
       let heavyMissileFlightRoar = null;
       let laserMotorSfx = null;
+      let laserLoopRestartPending = false;
       const customWeaponAudioLoops = {};
       const customWeaponAudioChannels = {};
       const customWeaponAudioChannelSrc = {};
@@ -5406,6 +5407,10 @@
         const audio = entry?.audio;
         if (!audio) return false;
         try {
+          if (audible && laserLoopRestartPending) {
+            audio.currentTime = 0;
+            laserLoopRestartPending = false;
+          }
           audio.muted = !audible;
           audio.volume = audible ? bound(Number(volume) || 0.82, 0, 1) : 0;
           audio.playbackRate = 1;
@@ -5413,6 +5418,19 @@
           return false;
         }
         return true;
+      }
+
+      function restartLaserLoopOnNextAudiblePlay() {
+        if (!getEffectiveAudioSource("laserLoop")) return;
+        laserLoopRestartPending = true;
+        setLaserLoopAudible(false);
+        const audio = customWeaponAudioLoops.laserLoop?.audio;
+        if (!audio) return;
+        try {
+          audio.currentTime = 0;
+        } catch {
+          // Keep the pending flag so the first audible frame can retry the seek.
+        }
       }
 
       function unlockAudioByGesture() {
@@ -5582,6 +5600,9 @@
       function stopWeaponAudioLoop(key) {
         const entry = customWeaponAudioLoops[key];
         if (!entry) return;
+        if (key === "laserLoop") {
+          laserLoopRestartPending = false;
+        }
         delete customWeaponAudioLoops[key];
         delete customWeaponAudioLoopAttemptAt[key];
         try {
@@ -7816,6 +7837,7 @@
         const maxDuration = getLaserDurationSec();
         state.laserTime = Math.min(maxDuration, state.laserTime + addTime);
         state.laserFiring = false;
+        restartLaserLoopOnNextAudiblePlay();
       }
 
       function updateLaserState(dt) {
