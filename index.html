@@ -1015,6 +1015,7 @@
     </div>
   </div>
 
+  <script src="phaser.min.js"></script>
   <script>
     (async () => {
       const WIDTH = 400;
@@ -2986,7 +2987,13 @@
       }
 
       const canvas = document.getElementById("game");
-      const ctx = canvas.getContext("2d");
+      const frameCanvas = document.createElement("canvas");
+      frameCanvas.width = WIDTH;
+      frameCanvas.height = HEIGHT;
+      const ctx = frameCanvas.getContext("2d");
+      if (!ctx) {
+        throw new Error("canvas context failed");
+      }
       const overlay = document.getElementById("overlay");
       const overlayTitle = document.getElementById("overlayTitle");
       const overlaySub = document.getElementById("overlaySub");
@@ -3212,7 +3219,6 @@
         separationHighEnemyCount: 64,
       };
 
-      let lastTime = performance.now();
       let toastTimer = null;
       let audioCtx = null;
       let audioUnlocked = false;
@@ -9875,23 +9881,29 @@
         ctx.restore();
       }
 
-      function gameLoop(now) {
-        const dt = Math.min(0.033, (now - lastTime) / 1000);
-        lastTime = now;
-
-        update(dt);
-        render();
-
-        bestBadge.textContent = `最高分：${state.best}`;
-        requestAnimationFrame(gameLoop);
-      }
-
       function readPoint(ev) {
+        const pointerEvent = ev?.nativeEvent || ev;
         const rect = canvas.getBoundingClientRect();
-        return {
-          x: ((ev.clientX - rect.left) / rect.width) * WIDTH,
-          y: ((ev.clientY - rect.top) / rect.height) * HEIGHT,
-        };
+        const clientX = Number(pointerEvent?.clientX);
+        const clientY = Number(pointerEvent?.clientY);
+        if (Number.isFinite(clientX) && Number.isFinite(clientY)) {
+          return {
+            x: ((clientX - rect.left) / rect.width) * WIDTH,
+            y: ((clientY - rect.top) / rect.height) * HEIGHT,
+          };
+        }
+        if (ev?.phaserPointer && Number.isFinite(ev.phaserPointer.x) && Number.isFinite(ev.phaserPointer.y)) {
+          return {
+            x: ev.phaserPointer.x,
+            y: ev.phaserPointer.y,
+          };
+        }
+        if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+          return {
+            x: WIDTH / 2,
+            y: HEIGHT / 2,
+          };
+        }
       }
 
       function markTouchTapMovement(ev) {
@@ -9956,7 +9968,7 @@
         input.pointerY = clamp(activeTouchDrag.playerY + (p.y - activeTouchDrag.touchY), HEIGHT * 0.34, HEIGHT - 10);
       }
 
-      canvas.addEventListener("pointerdown", (ev) => {
+      function handlePointerDown(ev) {
         if (state.screen !== "playing") return;
         ev.preventDefault();
         unlockAudioByGesture();
@@ -10016,19 +10028,19 @@
             // no-op
           }
         }
-      }, { passive: false });
+      }
 
-      canvas.addEventListener("contextmenu", (ev) => {
+      function handleContextMenu(ev) {
         if (state.screen !== "playing") return;
         ev.preventDefault();
         unlockAudioByGesture();
         detonateBomb();
-      }, { passive: false });
+      }
 
-      canvas.addEventListener("pointermove", (ev) => {
+      function handlePointerMove(ev) {
         ev.preventDefault();
         onPointerMove(ev);
-      }, { passive: false });
+      }
 
       function releasePointer(ev) {
         if (ev && ev.pointerType === "mouse") {
@@ -10049,27 +10061,27 @@
         input.pointerActive = false;
       }
 
-      canvas.addEventListener("pointerenter", (ev) => {
+      function handlePointerEnter(ev) {
         if (ev.pointerType !== "mouse" || state.screen !== "playing") return;
         onPointerMove(ev);
-      });
+      }
 
-      canvas.addEventListener("pointerleave", (ev) => {
+      function handlePointerLeave(ev) {
         if (ev.pointerType !== "mouse") return;
         input.pointerActive = false;
         input.heavyFire = false;
-      });
+      }
 
-      canvas.addEventListener("pointerup", (ev) => {
+      function handlePointerUp(ev) {
         ev.preventDefault();
         if (ev.pointerType === "mouse" && ev.button === 1) {
           input.heavyFire = false;
         }
         commitTouchTap(ev);
         releasePointer(ev);
-      }, { passive: false });
+      }
 
-      canvas.addEventListener("pointercancel", (ev) => {
+      function handlePointerCancel(ev) {
         ev.preventDefault();
         if (ev.pointerType === "mouse" && ev.button === 1) {
           input.heavyFire = false;
@@ -10081,16 +10093,7 @@
           activeTouchTap = null;
         }
         releasePointer(ev);
-      }, { passive: false });
-
-      canvas.addEventListener("touchstart", (ev) => {
-        ev.preventDefault();
-        unlockAudioByGesture();
-      }, { passive: false });
-
-      canvas.addEventListener("touchmove", (ev) => {
-        ev.preventDefault();
-      }, { passive: false });
+      }
 
       const keyMap = {
         ArrowLeft: "left",
@@ -10103,7 +10106,7 @@
         s: "down",
       };
 
-      window.addEventListener("keydown", (ev) => {
+      function handleKeyDown(ev) {
         if (state.screen !== "playing") return;
         const key = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
         if (key in keyMap) {
@@ -10114,9 +10117,9 @@
           input.fire = true;
           ev.preventDefault();
         }
-      }, { passive: false });
+      }
 
-      window.addEventListener("keyup", (ev) => {
+      function handleKeyUp(ev) {
         const key = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
         if (key in keyMap) {
           input[keyMap[key]] = false;
@@ -10124,9 +10127,9 @@
         if (key === " " || key === "j") {
           input.fire = false;
         }
-      });
+      }
 
-      window.addEventListener("blur", () => {
+      function resetLiveInput() {
         input.up = false;
         input.down = false;
         input.left = false;
@@ -10134,7 +10137,162 @@
         input.fire = false;
         input.heavyFire = false;
         resetTouchPointerState();
-      });
+      }
+
+      function getPointerButton(pointer, nativeEvent) {
+        const nativeButton = Number(nativeEvent?.button);
+        if (Number.isFinite(nativeButton) && nativeButton >= 0) {
+          return nativeButton;
+        }
+        if (typeof pointer?.middleButtonDown === "function" && pointer.middleButtonDown()) return 1;
+        if (typeof pointer?.rightButtonDown === "function" && pointer.rightButtonDown()) return 2;
+        return 0;
+      }
+
+      function getPointerType(pointer, nativeEvent) {
+        const nativeType = nativeEvent?.pointerType;
+        if (nativeType === "mouse" || nativeType === "touch" || nativeType === "pen") {
+          return nativeType;
+        }
+        if (pointer?.wasTouch) return "touch";
+        return "mouse";
+      }
+
+      function createPhaserPointerEvent(pointer) {
+        const nativeEvent = pointer?.event || {};
+        const nativePointerId = Number(nativeEvent?.pointerId);
+        const phaserPointerId = Number(pointer?.id);
+        return {
+          phaserPointer: pointer,
+          nativeEvent,
+          pointerId: Number.isFinite(nativePointerId)
+            ? nativePointerId
+            : Number.isFinite(phaserPointerId)
+              ? phaserPointerId
+              : 0,
+          pointerType: getPointerType(pointer, nativeEvent),
+          button: getPointerButton(pointer, nativeEvent),
+          preventDefault() {
+            try {
+              nativeEvent?.preventDefault?.();
+            } catch {
+              // no-op
+            }
+          },
+        };
+      }
+
+      function bindPhaserInput(scene) {
+        if (scene.input?.mouse?.disableContextMenu) {
+          scene.input.mouse.disableContextMenu();
+        }
+
+        const events = Phaser.Input.Events;
+        scene.input.on(events.POINTER_DOWN, (pointer) => {
+          handlePointerDown(createPhaserPointerEvent(pointer));
+        });
+        scene.input.on(events.POINTER_MOVE, (pointer) => {
+          handlePointerMove(createPhaserPointerEvent(pointer));
+        });
+        scene.input.on(events.POINTER_UP, (pointer) => {
+          handlePointerUp(createPhaserPointerEvent(pointer));
+        });
+        scene.input.on(events.POINTER_UP_OUTSIDE, (pointer) => {
+          handlePointerUp(createPhaserPointerEvent(pointer));
+        });
+        scene.input.on(events.POINTER_OUT, (pointer) => {
+          handlePointerCancel(createPhaserPointerEvent(pointer));
+        });
+        scene.input.on(events.GAME_OVER, (pointer) => {
+          handlePointerEnter(createPhaserPointerEvent(pointer));
+        });
+        scene.input.on(events.GAME_OUT, (pointer) => {
+          handlePointerLeave(createPhaserPointerEvent(pointer));
+        });
+
+        if (scene.input.keyboard) {
+          scene.input.keyboard.on(Phaser.Input.Keyboard.Events.KEY_DOWN, handleKeyDown);
+          scene.input.keyboard.on(Phaser.Input.Keyboard.Events.KEY_UP, handleKeyUp);
+        }
+
+        canvas.addEventListener("contextmenu", handleContextMenu, { passive: false });
+        canvas.addEventListener("touchstart", (ev) => {
+          ev.preventDefault();
+          unlockAudioByGesture();
+        }, { passive: false });
+        canvas.addEventListener("touchmove", (ev) => {
+          ev.preventDefault();
+        }, { passive: false });
+        window.addEventListener("blur", resetLiveInput);
+      }
+
+      function refreshBestScoreBadge() {
+        bestBadge.textContent = `最高分：${state.best}`;
+      }
+
+      function createPhaserGameLoop() {
+        if (!window.Phaser) {
+          overlay.classList.remove("hidden");
+          overlayTitle.textContent = "Phaser 未加载";
+          overlaySub.textContent = "资源缺失";
+          overlayDesc.textContent = "请确认 phaser.min.js 位于页面同级目录";
+          startBtn.disabled = true;
+          throw new Error("Phaser failed to load");
+        }
+
+        class Air1945Scene extends Phaser.Scene {
+          constructor() {
+            super("Air1945Scene");
+            this.frameTexture = null;
+          }
+
+          create() {
+            this.cameras.main.setBackgroundColor("#050c13");
+            this.frameTexture = this.textures.addCanvas("air1945-frame", frameCanvas);
+            this.add.image(0, 0, "air1945-frame").setOrigin(0, 0);
+            bindPhaserInput(this);
+            render();
+            this.frameTexture.refresh();
+            refreshBestScoreBadge();
+          }
+
+          update(_time, delta) {
+            const dt = Math.min(0.033, Math.max(0, Number(delta) || 0) / 1000);
+            update(dt);
+            render();
+            if (this.frameTexture) {
+              this.frameTexture.refresh();
+            }
+            refreshBestScoreBadge();
+          }
+        }
+
+        return new Phaser.Game({
+          type: Phaser.CANVAS,
+          width: WIDTH,
+          height: HEIGHT,
+          canvas,
+          backgroundColor: "#050c13",
+          audio: {
+            noAudio: true,
+          },
+          input: {
+            activePointers: 4,
+            smoothFactor: 0,
+          },
+          render: {
+            antialias: true,
+            pixelArt: false,
+            roundPixels: false,
+          },
+          scale: {
+            mode: Phaser.Scale.NONE,
+            width: WIDTH,
+            height: HEIGHT,
+          },
+          scene: Air1945Scene,
+        });
+      }
 
       settingsBtn.addEventListener("click", () => {
         syncSettingsToForm();
@@ -10212,7 +10370,7 @@
       buildAppearanceConfigTable();
       syncSettingsToForm();
       openMenu();
-      requestAnimationFrame(gameLoop);
+      createPhaserGameLoop();
     })();
   </script>
 </body>
