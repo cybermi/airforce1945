@@ -3233,6 +3233,12 @@
       let heavyMissileFlightRoar = null;
       let laserMotorSfx = null;
       let laserLoopRestartPending = false;
+      let laserLoopBuffer = null;
+      let laserLoopBufferSrc = "";
+      let laserLoopBufferPromise = null;
+      let laserLoopBufferFailedSrc = "";
+      let laserLoopBufferSource = null;
+      let laserLoopBufferGain = null;
       const customWeaponAudioLoops = {};
       const customWeaponAudioChannels = {};
       const customWeaponAudioChannelSrc = {};
@@ -5342,10 +5348,183 @@
         return audioCtx;
       }
 
+      function audioDataUrlToArrayBuffer(dataUrl) {
+        if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) return null;
+        const comma = dataUrl.indexOf(",");
+        if (comma <= 0) return null;
+        const header = dataUrl.slice(0, comma);
+        const payload = dataUrl.slice(comma + 1);
+        if (/;base64/i.test(header)) {
+          const binary = atob(payload.replace(/\s+/g, ""));
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i += 1) {
+            bytes[i] = binary.charCodeAt(i);
+          }
+          return bytes.buffer;
+        }
+        const text = decodeURIComponent(payload);
+        const bytes = new Uint8Array(text.length);
+        for (let i = 0; i < text.length; i += 1) {
+          bytes[i] = text.charCodeAt(i) & 0xff;
+        }
+        return bytes.buffer;
+      }
+
+      async function fetchAudioSourceAsArrayBuffer(src) {
+        const dataBuffer = audioDataUrlToArrayBuffer(src);
+        if (dataBuffer) return dataBuffer;
+        const response = await fetch(src, { cache: "force-cache" });
+        if (!response.ok) {
+          throw new Error("audio fetch failed");
+        }
+        return response.arrayBuffer();
+      }
+
+      function decodeAudioBuffer(ctxAudio, arrayBuffer) {
+        return new Promise((resolve, reject) => {
+          let settled = false;
+          const done = (buffer) => {
+            if (settled) return;
+            settled = true;
+            resolve(buffer);
+          };
+          const fail = (err) => {
+            if (settled) return;
+            settled = true;
+            reject(err);
+          };
+          try {
+            const task = ctxAudio.decodeAudioData(arrayBuffer.slice(0), done, fail);
+            if (task && typeof task.then === "function") {
+              task.then(done).catch(fail);
+            }
+          } catch (err) {
+            fail(err);
+          }
+        });
+      }
+
+      function warmLaserLoopBuffer() {
+        const src = getEffectiveAudioSource("laserLoop");
+        const ctxAudio = ensureAudio();
+        if (!src || !ctxAudio) return null;
+        if (laserLoopBuffer && laserLoopBufferSrc === src) return Promise.resolve(laserLoopBuffer);
+        if (laserLoopBufferPromise && laserLoopBufferSrc === src) return laserLoopBufferPromise;
+        if (laserLoopBufferFailedSrc === src) return Promise.reject(new Error("laser loop buffer unavailable"));
+        if (laserLoopBufferSrc && laserLoopBufferSrc !== src) {
+          stopLaserLoopBufferSource();
+        }
+        laserLoopBuffer = null;
+        laserLoopBufferSrc = src;
+        laserLoopBufferPromise = fetchAudioSourceAsArrayBuffer(src)
+          .then((arrayBuffer) => decodeAudioBuffer(ctxAudio, arrayBuffer))
+          .then((buffer) => {
+            if (laserLoopBufferSrc === src) {
+              laserLoopBuffer = buffer;
+              laserLoopBufferPromise = null;
+              laserLoopBufferFailedSrc = "";
+            }
+            return buffer;
+          })
+          .catch((err) => {
+            if (laserLoopBufferSrc === src) {
+              laserLoopBuffer = null;
+              laserLoopBufferPromise = null;
+              laserLoopBufferFailedSrc = src;
+            }
+            throw err;
+          });
+        return laserLoopBufferPromise;
+      }
+
+      function stopLaserLoopBufferSource() {
+        const source = laserLoopBufferSource;
+        laserLoopBufferSource = null;
+        if (!source) return;
+        try {
+          source.onended = null;
+          source.stop(0);
+        } catch {
+          // no-op
+        }
+        try {
+          source.disconnect();
+        } catch {
+          // no-op
+        }
+      }
+
+      function getLaserLoopBufferGain() {
+        const ctxAudio = ensureAudio();
+        if (!ctxAudio) return null;
+        if (!laserLoopBufferGain) {
+          laserLoopBufferGain = ctxAudio.createGain();
+          laserLoopBufferGain.gain.value = 0;
+          laserLoopBufferGain.connect(ctxAudio.destination);
+        }
+        return laserLoopBufferGain;
+      }
+
+      function startLaserLoopBufferFromStart(volume = 0.82) {
+        const src = getEffectiveAudioSource("laserLoop");
+        const ctxAudio = ensureAudio();
+        if (!state.soundOn || !src || !ctxAudio) return false;
+        if (laserLoopBufferFailedSrc === src) return false;
+        if (ctxAudio.state !== "running") {
+          ctxAudio.resume().catch(() => {});
+          warmLaserLoopBuffer()?.then(() => {
+            if (state.screen === "playing" && state.laserFiring && state.laserTime > 0) {
+              startLaserLoopBufferFromStart(volume);
+            }
+          }).catch(() => {});
+          return false;
+        }
+        if (!laserLoopBuffer || laserLoopBufferSrc !== src) {
+          warmLaserLoopBuffer()?.then(() => {
+            if (state.screen === "playing" && state.laserFiring && state.laserTime > 0) {
+              startLaserLoopBufferFromStart(volume);
+            }
+          }).catch(() => {});
+          return false;
+        }
+        const gain = getLaserLoopBufferGain();
+        if (!gain) return false;
+        stopLaserLoopBufferSource();
+        const source = ctxAudio.createBufferSource();
+        source.buffer = laserLoopBuffer;
+        source.loop = true;
+        source.connect(gain);
+        gain.gain.setValueAtTime(bound(Number(volume) || 0.82, 0, 1), ctxAudio.currentTime);
+        source.onended = () => {
+          if (laserLoopBufferSource === source) {
+            laserLoopBufferSource = null;
+          }
+        };
+        source.start(0, 0);
+        laserLoopBufferSource = source;
+        laserLoopRestartPending = false;
+        return true;
+      }
+
+      function setLaserLoopBufferAudible(audible, volume = 0.82) {
+        if (!laserLoopBufferSource || !laserLoopBufferGain) return false;
+        const ctxAudio = ensureAudio();
+        try {
+          const value = audible ? bound(Number(volume) || 0.82, 0, 1) : 0;
+          const now = ctxAudio?.currentTime || 0;
+          laserLoopBufferGain.gain.cancelScheduledValues(now);
+          laserLoopBufferGain.gain.setValueAtTime(value, now);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+
       function primeLaserLoopAudioByGesture() {
         if (!state.soundOn || state.laserFiring) return;
         const src = getEffectiveAudioSource("laserLoop");
         if (!src) return;
+        warmLaserLoopBuffer()?.catch(() => {});
 
         let entry = customWeaponAudioLoops.laserLoop;
         if (!entry || entry.src !== src || !entry.audio) {
@@ -5423,6 +5602,9 @@
       function restartLaserLoopOnNextAudiblePlay() {
         if (!getEffectiveAudioSource("laserLoop")) return;
         laserLoopRestartPending = true;
+        setLaserLoopBufferAudible(false);
+        stopLaserLoopBufferSource();
+        warmLaserLoopBuffer()?.catch(() => {});
         setLaserLoopAudible(false);
         const audio = customWeaponAudioLoops.laserLoop?.audio;
         if (!audio) return;
@@ -5697,6 +5879,16 @@
       }
 
       function stopAllCustomWeaponAudio() {
+        stopLaserLoopBufferSource();
+        if (laserLoopBufferGain) {
+          try {
+            laserLoopBufferGain.disconnect();
+          } catch {
+            // no-op
+          }
+          laserLoopBufferGain = null;
+        }
+        laserLoopRestartPending = false;
         for (const key in customWeaponAudioLoops) {
           stopWeaponAudioLoop(key);
         }
@@ -6202,20 +6394,35 @@
       function syncLaserMotorSfxState() {
         const laserLoopSrc = getEffectiveAudioSource("laserLoop");
         if (state.screen !== "playing" || !state.soundOn) {
+          stopLaserLoopBufferSource();
           stopWeaponAudioLoop("laserLoop");
           stopLaserMotorSfx(0.05);
           return;
         }
         if (state.laserTime <= 0 || !state.laserFiring) {
           if (laserLoopSrc) {
+            setLaserLoopBufferAudible(false);
             setLaserLoopAudible(false);
           } else {
+            stopLaserLoopBufferSource();
             stopWeaponAudioLoop("laserLoop");
           }
           stopLaserMotorSfx(0.05);
           return;
         }
         if (laserLoopSrc) {
+          const ctxAudio = ensureAudio();
+          if (ctxAudio && laserLoopBufferFailedSrc !== laserLoopSrc) {
+            warmLaserLoopBuffer()?.catch(() => {});
+            if (laserLoopRestartPending || !laserLoopBufferSource) {
+              startLaserLoopBufferFromStart(0.82);
+            } else {
+              setLaserLoopBufferAudible(true, 0.82);
+            }
+            setLaserLoopAudible(false);
+            stopLaserMotorSfx(0.04);
+            return;
+          }
           primeLaserLoopAudioByGesture();
           startWeaponAudioLoop("laserLoop", { volume: 0.82 });
           setLaserLoopAudible(true, 0.82);
